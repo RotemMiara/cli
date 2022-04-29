@@ -248,7 +248,7 @@ describe('custom rules pull from a remote OCI registry', () => {
 
         it('should display a message informing of the application of custom rules', async () => {
           const { stdout } = await run(
-            `snyk iac ${testedCommand} ./iac/terraform/sg_open_ssh.tf`,
+            `snyk iac ${testedCommand} ./iac/terraform/sg_open_ssh.tf `,
             {
               SNYK_CFG_OCI_REGISTRY_URL: SNYK_CFG_OCI_REGISTRY_URL as string,
               SNYK_CFG_OCI_REGISTRY_USERNAME: SNYK_CFG_OCI_REGISTRY_USERNAME as string,
