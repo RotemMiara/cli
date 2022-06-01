@@ -4,7 +4,6 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
-	"github.com/snyk/cli/cliv2/internal/proxy"
 	"io/ioutil"
 	"log"
 	"net/http"
@@ -12,6 +11,9 @@ import (
 	"net/url"
 	"os"
 	"testing"
+
+	"github.com/snyk/cli/cliv2/internal/httpauth"
+	"github.com/snyk/cli/cliv2/internal/proxy"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -136,4 +138,69 @@ func Test_xSnykCliVersionHeaderIsReplaced(t *testing.T) {
 	assert.Equal(t, expectedVersion, capturedVersion)
 
 	wp.Close()
+}
+
+func Test_EnabledProxyAuthentication(t *testing.T) {
+
+	var expectedHeaderProxyAuth string
+	debugLogger := log.New(os.Stderr, "", log.Ldate|log.Ltime|log.Lmicroseconds|log.Lshortfile)
+	wp, err := proxy.NewWrapperProxy(false, "", "", debugLogger)
+	assert.Nil(t, err)
+
+	// start the proxy
+	port, err := wp.Start()
+	assert.Nil(t, err)
+	t.Log("proxy listening on port:", port)
+
+	// configure a test client
+	rootCAs, _ := x509.SystemCertPool()
+	if rootCAs == nil {
+		rootCAs = x509.NewCertPool()
+	}
+
+	proxyCertBytes, err := ioutil.ReadFile(wp.CertificateLocation)
+	assert.Nil(t, err)
+	ok := rootCAs.AppendCertsFromPEM(proxyCertBytes)
+	assert.True(t, ok)
+
+	config := &tls.Config{
+		InsecureSkipVerify: false,
+		RootCAs:            rootCAs,
+	}
+
+	proxyUrl, err := url.Parse(fmt.Sprintf("http://127.0.0.1:%d", port))
+	proxiedClient := &http.Client{Transport: &http.Transport{
+		Proxy:           http.ProxyURL(proxyUrl),
+		TLSClientConfig: config,
+	}}
+	assert.Nil(t, err)
+
+	// configure a test server
+	var actualHeaderProxyAuthorization string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		actualHeaderProxyAuthorization = r.Header.Get(httpauth.ProxyAuthorizationKey)
+	}))
+	defer ts.Close()
+
+	// -- test case: enbale proxy auth mechanism mock --
+	wp.SetProxyAuthentication(httpauth.Mock)
+	expectedHeaderProxyAuth = "Mock"
+
+	res, err := proxiedClient.Get(ts.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assert.Equal(t, 200, res.StatusCode)
+	assert.Contains(t, actualHeaderProxyAuthorization, expectedHeaderProxyAuth)
+
+	// -- test case: disable proxy auth mechanism --
+	wp.SetProxyAuthentication(httpauth.NoAuth)
+	expectedHeaderProxyAuth = ""
+
+	res, err = proxiedClient.Get(ts.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assert.Equal(t, 200, res.StatusCode)
+	assert.Contains(t, actualHeaderProxyAuthorization, expectedHeaderProxyAuth)
 }

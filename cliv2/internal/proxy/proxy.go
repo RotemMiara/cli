@@ -11,20 +11,23 @@ import (
 	"os"
 
 	"github.com/snyk/cli/cliv2/internal/certs"
+	"github.com/snyk/cli/cliv2/internal/httpauth"
 	"github.com/snyk/cli/cliv2/internal/utils"
 
 	"github.com/elazarl/goproxy"
 )
 
 type WrapperProxy struct {
-	httpServer          *http.Server
-	DebugLogger         *log.Logger
-	CertificateLocation string
+	httpServer                 *http.Server
+	DebugLogger                *log.Logger
+	CertificateLocation        string
+	acceptedProxyAuthMechanism httpauth.AuthenticationMechanism
 }
 
 func NewWrapperProxy(insecureSkipVerify bool, cacheDirectory string, cliVersion string, debugLogger *log.Logger) (*WrapperProxy, error) {
 	var p WrapperProxy
 	p.DebugLogger = debugLogger
+	p.acceptedProxyAuthMechanism = httpauth.NoAuth
 
 	certName := "snyk-embedded-proxy"
 	certPEMBlock, keyPEMBlock, err := certs.MakeSelfSignedCert(certName, []string{}, p.DebugLogger)
@@ -70,11 +73,29 @@ func NewWrapperProxy(insecureSkipVerify bool, cacheDirectory string, cliVersion 
 	proxy.Logger = debugLogger
 	proxy.OnRequest().HandleConnect(goproxy.AlwaysMitm)
 	proxy.OnRequest().DoFunc(func(r *http.Request, ctx *goproxy.ProxyCtx) (*http.Request, *http.Response) {
+
+		// Manipulate Header (replace x-snyk-cli-version)
 		existingValue := r.Header.Get("x-snyk-cli-version")
 		if existingValue != "" {
 			debugLogger.Printf("Replacing value of existing x-snyk-cli-version header (%s) with %s\n", existingValue, cliVersion)
 			r.Header.Set("x-snyk-cli-version", cliVersion)
 		}
+
+		// Manipulate Header (add Proxy-Authorization)
+		if p.acceptedProxyAuthMechanism != httpauth.NoAuth {
+
+			// Ensure that the underlying proxy doesn't remove the proxy Headers we are adding
+			proxy.KeepHeader = true
+
+			// create an AuthenticationHandler
+			authHandler := httpauth.AuthenticationHandler{
+				Mechanism: p.acceptedProxyAuthMechanism,
+			}
+			if err = authHandler.AddProxyAuthenticationHeader(r); err != nil {
+				fmt.Println("Failed to add proxy Authentication")
+			}
+		}
+
 		return r, nil
 	})
 
@@ -139,4 +160,8 @@ func setCAFromBytes(certPEMBlock []byte, keyPEMBlock []byte) error {
 	goproxy.HTTPMitmConnect = &goproxy.ConnectAction{Action: goproxy.ConnectHTTPMitm, TLSConfig: goproxy.TLSConfigFromCA(&goproxyCa)}
 	goproxy.RejectConnect = &goproxy.ConnectAction{Action: goproxy.ConnectReject, TLSConfig: goproxy.TLSConfigFromCA(&goproxyCa)}
 	return nil
+}
+
+func (p *WrapperProxy) SetProxyAuthentication(mechanism httpauth.AuthenticationMechanism) {
+	p.acceptedProxyAuthMechanism = mechanism
 }
