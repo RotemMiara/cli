@@ -7,12 +7,14 @@ import (
 	"os"
 
 	"github.com/snyk/cli/cliv2/internal/cliv2"
+	"github.com/snyk/cli/cliv2/internal/httpauth"
 	"github.com/snyk/cli/cliv2/internal/proxy"
 	"github.com/snyk/cli/cliv2/internal/utils"
 )
 
 type EnvironmentVariables struct {
-	CacheDirectory string
+	CacheDirectory               string
+	ProxyAuthenticationMechanism httpauth.AuthenticationMechanism
 }
 
 func getDebugLogger(args []string) *log.Logger {
@@ -26,11 +28,24 @@ func getDebugLogger(args []string) *log.Logger {
 	return debugLogger
 }
 
-func main() {
+func getConfiguration() EnvironmentVariables {
+	args := os.Args[1:]
+
 	envVariables := EnvironmentVariables{
-		CacheDirectory: os.Getenv("SNYK_CACHE_PATH"),
+		CacheDirectory:               os.Getenv("SNYK_CACHE_PATH"),
+		ProxyAuthenticationMechanism: httpauth.NoAuth,
 	}
-	errorCode := MainWithErrorCode(envVariables, os.Args[1:])
+
+	if utils.Contains(args, "--proxy-negotiate") {
+		envVariables.ProxyAuthenticationMechanism = httpauth.Negotiate
+	}
+
+	return envVariables
+}
+
+func main() {
+	config := getConfiguration()
+	errorCode := MainWithErrorCode(config, os.Args[1:])
 	os.Exit(errorCode)
 }
 
@@ -67,6 +82,8 @@ func MainWithErrorCode(envVariables EnvironmentVariables, args []string) int {
 		fmt.Println(err)
 		return cliv2.SNYK_EXIT_CODE_ERROR
 	}
+
+	wrapperProxy.SetProxyAuthentication(envVariables.ProxyAuthenticationMechanism)
 
 	port, err := wrapperProxy.Start()
 	if err != nil {
