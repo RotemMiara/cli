@@ -8,6 +8,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 
 	"github.com/snyk/cli/cliv2/internal/certs"
@@ -21,6 +22,7 @@ type WrapperProxy struct {
 	httpServer                 *http.Server
 	DebugLogger                *log.Logger
 	CertificateLocation        string
+	Proxy                      func(*http.Request) (*url.URL, error)
 	acceptedProxyAuthMechanism httpauth.AuthenticationMechanism
 }
 
@@ -28,6 +30,7 @@ func NewWrapperProxy(insecureSkipVerify bool, cacheDirectory string, cliVersion 
 	var p WrapperProxy
 	p.DebugLogger = debugLogger
 	p.acceptedProxyAuthMechanism = httpauth.NoAuth
+	p.Proxy = http.ProxyFromEnvironment
 
 	certName := "snyk-embedded-proxy"
 	certPEMBlock, keyPEMBlock, err := certs.MakeSelfSignedCert(certName, []string{}, p.DebugLogger)
@@ -62,12 +65,30 @@ func NewWrapperProxy(insecureSkipVerify bool, cacheDirectory string, cliVersion 
 	if err != nil {
 		return nil, err
 	}
+
 	proxy := goproxy.NewProxyHttpServer()
+
+	determineConnectHeader := func(ctx context.Context, proxyURL *url.URL, target string) (http.Header, error) {
+		proxyConnectHeader := make(http.Header)
+
+		// create an AuthenticationHandler
+		authHandler := httpauth.AuthenticationHandler{
+			Mechanism: p.acceptedProxyAuthMechanism,
+		}
+
+		token, err := authHandler.GetAuthorizationValue(httpauth.ProxyAuthorizationKey, proxyURL)
+		proxyConnectHeader.Add(httpauth.ProxyAuthorizationKey, token)
+		//fmt.Println(proxyConnectHeader)
+
+		return proxyConnectHeader, err
+	}
+
 	proxy.Tr = &http.Transport{
-		Proxy: http.ProxyFromEnvironment,
+		Proxy: p.Proxy,
 		TLSClientConfig: &tls.Config{
 			InsecureSkipVerify: insecureSkipVerify, // goproxy defaults to true
 		},
+		GetProxyConnectHeader: determineConnectHeader,
 	}
 
 	proxy.Logger = debugLogger
@@ -79,21 +100,6 @@ func NewWrapperProxy(insecureSkipVerify bool, cacheDirectory string, cliVersion 
 		if existingValue != "" {
 			debugLogger.Printf("Replacing value of existing x-snyk-cli-version header (%s) with %s\n", existingValue, cliVersion)
 			r.Header.Set("x-snyk-cli-version", cliVersion)
-		}
-
-		// Manipulate Header (add Proxy-Authorization)
-		if p.acceptedProxyAuthMechanism != httpauth.NoAuth {
-
-			// Ensure that the underlying proxy doesn't remove the proxy Headers we are adding
-			proxy.KeepHeader = true
-
-			// create an AuthenticationHandler
-			authHandler := httpauth.AuthenticationHandler{
-				Mechanism: p.acceptedProxyAuthMechanism,
-			}
-			if err = authHandler.AddProxyAuthenticationHeader(r); err != nil {
-				fmt.Println("Failed to add proxy Authentication")
-			}
 		}
 
 		return r, nil
@@ -164,4 +170,16 @@ func setCAFromBytes(certPEMBlock []byte, keyPEMBlock []byte) error {
 
 func (p *WrapperProxy) SetProxyAuthentication(mechanism httpauth.AuthenticationMechanism) {
 	p.acceptedProxyAuthMechanism = mechanism
+	p.DebugLogger.Println("Proxy Authentication Mechanism: ", p.acceptedProxyAuthMechanism)
+}
+
+func (p *WrapperProxy) SetProxy(proxyAddr string) {
+	if proxyUrl, err := url.Parse(proxyAddr); err == nil {
+		p.Proxy = func(req *http.Request) (*url.URL, error) {
+			return proxyUrl, nil
+		}
+		p.DebugLogger.Println("Proxy Address: ", proxyUrl)
+	} else {
+		fmt.Println("Failed to set proxy! ", err)
+	}
 }

@@ -1,7 +1,6 @@
 package httpauth_test
 
 import (
-	"net/http"
 	"net/url"
 	"testing"
 
@@ -9,48 +8,34 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func getTestRequest() http.Request {
-	request := http.Request{}
-	request.URL, _ = url.Parse("https://snyk.io")
-	request.Header = map[string][]string{
-		"Accept-Encoding": {"gzip, deflate"},
-		"Accept-Language": {"en-us"},
-		"Foo":             {"Bar", "two"},
-	}
-	return request
-}
-
 func Test_DisableAuthentication(t *testing.T) {
 
-	request := getTestRequest()
+	proxyAddr, _ := url.Parse("http://127.0.0.1")
+	expectedValue := ""
 
 	authHandler := httpauth.AuthenticationHandler{
 		Mechanism: httpauth.NoAuth,
 	}
 
-	err := authHandler.AddProxyAuthenticationHeader(&request)
+	actualValue, err := authHandler.GetAuthorizationValue(httpauth.ProxyAuthorizationKey, proxyAddr)
 	assert.Nil(t, err)
 
-	proxyAuthValue := request.Header.Get(httpauth.ProxyAuthorizationKey)
-	assert.Empty(t, proxyAuthValue)
+	assert.Equal(t, expectedValue, actualValue)
 
 }
 
 func Test_EnabledAuthentication_Mock(t *testing.T) {
 
-	request := getTestRequest()
+	proxyAddr, _ := url.Parse("http://127.0.0.1")
+	expectedValue := "Mock"
 
 	authHandler := httpauth.AuthenticationHandler{
 		Mechanism: httpauth.Mock,
 	}
 
-	err := authHandler.AddProxyAuthenticationHeader(&request)
+	actualValue, err := authHandler.GetAuthorizationValue(httpauth.ProxyAuthorizationKey, proxyAddr)
 	assert.Nil(t, err)
 
-	proxyAuthValue := request.Header.Get(httpauth.ProxyAuthorizationKey)
-	assert.Contains(t, proxyAuthValue, "Mock")
-
-	AuthValue := request.Header.Get(httpauth.AuthorizationKey)
-	assert.Empty(t, AuthValue)
+	assert.Equal(t, expectedValue, actualValue)
 
 }
