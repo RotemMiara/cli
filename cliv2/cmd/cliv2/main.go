@@ -14,6 +14,7 @@ import (
 
 type EnvironmentVariables struct {
 	CacheDirectory               string
+	Insecure                     bool
 	ProxyAuthenticationMechanism httpauth.AuthenticationMechanism
 }
 
@@ -34,11 +35,14 @@ func getConfiguration() EnvironmentVariables {
 	envVariables := EnvironmentVariables{
 		CacheDirectory:               os.Getenv("SNYK_CACHE_PATH"),
 		ProxyAuthenticationMechanism: httpauth.NoAuth,
+		Insecure:                     false,
 	}
 
 	if utils.Contains(args, "--proxy-negotiate") {
 		envVariables.ProxyAuthenticationMechanism = httpauth.Negotiate
 	}
+
+	envVariables.Insecure = utils.Contains(args, "--insecure")
 
 	return envVariables
 }
@@ -55,9 +59,7 @@ func MainWithErrorCode(envVariables EnvironmentVariables, args []string) int {
 	debugLogger.Println("debug: true")
 
 	debugLogger.Println("cacheDirectory:", envVariables.CacheDirectory)
-
-	insecure := utils.Contains(args, "--insecure")
-	debugLogger.Println("insecure:", insecure)
+	debugLogger.Println("insecure:", envVariables.Insecure)
 
 	if envVariables.CacheDirectory == "" {
 		envVariables.CacheDirectory, err = utils.SnykCacheDir()
@@ -76,7 +78,7 @@ func MainWithErrorCode(envVariables EnvironmentVariables, args []string) int {
 	}
 
 	// init proxy object
-	wrapperProxy, err := proxy.NewWrapperProxy(insecure, envVariables.CacheDirectory, cli.GetFullVersion(), debugLogger)
+	wrapperProxy, err := proxy.NewWrapperProxy(envVariables.Insecure, envVariables.CacheDirectory, cli.GetFullVersion(), debugLogger)
 	if err != nil {
 		fmt.Println("Failed to create proxy")
 		fmt.Println(err)
