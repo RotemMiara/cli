@@ -1,0 +1,190 @@
+#!/bin/bash
+
+# ISC License
+
+# Copyright (c) 2012 Kenneth Reitz
+
+# Permission to use, copy, modify and/or distribute this software for any
+# purpose with or without fee is hereby granted, provided that the above
+# copyright notice and this permission notice appear in all copies.
+
+# THE SOFTWARE IS PROVIDED "AS-IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+# WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+# MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+# ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+# WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+# ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+# OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+
+set -e
+
+PY_MAJOR=${PYENV:0:1}
+
+export KERBEROS_HOSTNAME=$(cat /etc/hostname)
+export KERBEROS_REALM=$(echo $KERBEROS_HOSTNAME | cut -d'.' -f2,3)
+export DEBIAN_FRONTEND=noninteractive
+export KRB5_KTNAME=/etc/krb5adasdas.keytab
+#export KRB5_KTNAME_TEST=/etc/krb5_test.keytab
+
+echo "Setting up Kerberos config file at /etc/krb5.conf"
+cat > /etc/krb5.conf << EOL
+[libdefaults]
+    default_realm = ${KERBEROS_REALM^^}
+    dns_lookup_realm = false
+    dns_lookup_kdc = false
+
+[realms]
+    ${KERBEROS_REALM^^} = {
+        kdc = localhost
+        admin_server = localhost
+    }
+
+[domain_realm]
+    .$KERBEROS_REALM = ${KERBEROS_REALM^^}
+
+[logging]
+    kdc = FILE:/var/log/krb5kdc.log
+    admin_server = FILE:/var/log/kadmin.log
+    default = FILE:/var/log/krb5lib.log
+EOL
+
+echo "Setting up kerberos ACL configuration at /etc/krb5kdc/kadm5.acl"
+mkdir /etc/krb5kdc
+echo -e "*/*@${KERBEROS_REALM^^}\t*" > /etc/krb5kdc/kadm5.acl
+
+echo "Installing all the packages required in this test"
+apt-get update
+apt-get \
+    -yq \
+    -qq \
+    install \
+    krb5-{user,kdc,admin-server,multidev} \
+    libkrb5-dev \
+    curl \
+    apache2 \
+    libapache2-mod-auth-gssapi \
+    build-essential \
+    squid
+
+cat > /etc/squid/squid.conf << EOL
+auth_param negotiate program /usr/lib/squid/negotiate_kerberos_auth
+auth_param negotiate children 10
+auth_param negotiate keep_alive on
+
+acl auth proxy_auth REQUIRED
+
+http_port 3128
+
+http_access deny !auth
+http_access allow auth
+http_access deny all
+EOL
+
+
+echo "Creating KDC database"
+# krb5_newrealm returns non-0 return code as it is running in a container, ignore it for this command only
+set +e
+printf "$KERBEROS_PASSWORD\n$KERBEROS_PASSWORD" | krb5_newrealm
+set -e
+
+echo "Creating principals for tests"
+kadmin.local -q "addprinc -pw $KERBEROS_PASSWORD $KERBEROS_USERNAME"
+
+echo "Adding HTTP principal for Kerberos and create keytab"
+kadmin.local -q "addprinc -randkey HTTP/$KERBEROS_HOSTNAME"
+kadmin.local -q "ktadd -k /etc/krb5.keytab HTTP/$KERBEROS_HOSTNAME"
+chmod 777 /etc/krb5.keytab
+
+echo "Restarting Kerberos KDS service"
+service krb5-kdc restart
+service squid restart
+
+echo "Add ServerName to Apache config"
+grep -q -F "ServerName $KERBEROS_HOSTNAME" /etc/apache2/apache2.conf || echo "ServerName $KERBEROS_HOSTNAME" >> /etc/apache2/apache2.conf
+
+echo "Deleting default virtual host file"
+rm /etc/apache2/sites-enabled/000-default.conf
+rm /etc/apache2/sites-available/000-default.conf
+rm /etc/apache2/sites-available/default-ssl.conf
+
+echo "Create website directory structure and pages"
+mkdir -p /var/www/example.com/public_html
+chmod -R 755 /var/www
+echo "<html><head><title>Title</title></head><body>body mesage</body></html>" > /var/www/example.com/public_html/index.html
+
+echo "Create self signed certificate for HTTPS endpoint"
+mkdir /etc/apache2/ssl
+openssl req \
+    -x509 \
+    -nodes \
+    -days 365 \
+    -newkey rsa:2048 \
+    -keyout /etc/apache2/ssl/https.key \
+    -out /etc/apache2/ssl/https.crt \
+    -subj "/CN=$KERBEROS_HOSTNAME/o=Testing LTS./C=US"
+
+echo "Create virtual host files"
+cat > /etc/apache2/sites-available/example.com.conf << EOL
+<VirtualHost *:80>
+    ServerName $KERBEROS_HOSTNAME
+    ServerAlias $KERBEROS_HOSTNAME
+    DocumentRoot /var/www/example.com/public_html
+    ErrorLog ${APACHE_LOG_DIR}/error.log
+    CustomLog ${APACHE_LOG_DIR}/access.log combined
+    <Directory "/var/www/example.com/public_html">
+        AuthType GSSAPI
+        AuthName "GSSAPI Single Sign On Login"
+        Require user $KERBEROS_USERNAME@${KERBEROS_REALM^^}
+        GssapiCredStore keytab:/etc/krb5.keytab
+    </Directory>
+</VirtualHost>
+<VirtualHost *:443>
+    ServerName $KERBEROS_HOSTNAME
+    ServerAlias $KERBEROS_HOSTNAME
+    DocumentRoot /var/www/example.com/public_html
+    ErrorLog ${APACHE_LOG_DIR}/error.log
+    CustomLog ${APACHE_LOG_DIR}/access.log combined
+    SSLEngine on
+    SSLCertificateFile /etc/apache2/ssl/https.crt
+    SSLCertificateKeyFile /etc/apache2/ssl/https.key
+    <Directory "/var/www/example.com/public_html">
+        AuthType GSSAPI
+        AuthName "GSSAPI Single Sign On Login"
+        Require user $KERBEROS_USERNAME@${KERBEROS_REALM^^}
+        GssapiCredStore keytab:/etc/krb5.keytab
+    </Directory>
+</VirtualHost>
+EOL
+
+echo "Enabling virtual host site"
+a2enmod ssl
+a2ensite example.com.conf
+service apache2 restart
+
+echo "Getting ticket for Kerberos user"
+echo -n "$KERBEROS_PASSWORD" | kinit "$KERBEROS_USERNAME@${KERBEROS_REALM^^}"
+
+echo "Try out the HTTP connection with curl"
+CURL_OUTPUT=$(curl --negotiate -u : "http://$KERBEROS_HOSTNAME")
+
+if [ "$CURL_OUTPUT" != "<html><head><title>Title</title></head><body>body mesage</body></html>" ]; then
+    echo -e "ERROR: Did not get success message, cannot continue with actual tests:\nActual Output:\n$CURL_OUTPUT"
+    exit 1
+else
+    echo -e "SUCCESS: Apache site built and set for Kerberos auth\nActual Output:\n$CURL_OUTPUT"
+fi
+
+echo "Try out the HTTPS connection with curl"
+CURL_OUTPUT=$(curl --negotiate -u : "https://$KERBEROS_HOSTNAME" --insecure)
+
+if [ "$CURL_OUTPUT" != "<html><head><title>Title</title></head><body>body mesage</body></html>" ]; then
+    echo -e "ERROR: Did not get success message, cannot continue with actual tests:\nActual Output:\n$CURL_OUTPUT"
+    exit 1
+else
+    echo -e "SUCCESS: Apache site built and set for Kerberos auth\nActual Output:\n$CURL_OUTPUT"
+fi
+
+echo "Try out proxy"
+curl --verbose --proxy-negotiate -u : --proxy "http://$KERBEROS_HOSTNAME:3128" "https://www.snyk.io"
+
+echo "Running proxy: http://$KERBEROS_HOSTNAME:3128"

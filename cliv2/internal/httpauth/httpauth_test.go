@@ -17,7 +17,7 @@ func Test_DisableAuthentication(t *testing.T) {
 		Mechanism: httpauth.NoAuth,
 	}
 
-	actualValue, err := authHandler.GetAuthorizationValue(httpauth.ProxyAuthorizationKey, proxyAddr)
+	actualValue, err := authHandler.GetAuthorizationValue(proxyAddr)
 	assert.Nil(t, err)
 
 	assert.Equal(t, expectedValue, actualValue)
@@ -33,7 +33,7 @@ func Test_EnabledAuthentication_Mock(t *testing.T) {
 		Mechanism: httpauth.Mock,
 	}
 
-	actualValue, err := authHandler.GetAuthorizationValue(httpauth.ProxyAuthorizationKey, proxyAddr)
+	actualValue, err := authHandler.GetAuthorizationValue(proxyAddr)
 	assert.Nil(t, err)
 
 	assert.Equal(t, expectedValue, actualValue)

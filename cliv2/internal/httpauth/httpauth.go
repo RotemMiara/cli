@@ -24,7 +24,7 @@ type AuthenticationHandler struct {
 	Mechanism AuthenticationMechanism
 }
 
-func (a *AuthenticationHandler) GetAuthorizationValue(authType string, url *url.URL) (string, error) {
+func (a *AuthenticationHandler) GetAuthorizationValue(url *url.URL) (string, error) {
 
 	var authorizeValue string
 
@@ -50,4 +50,19 @@ func (a *AuthenticationHandler) GetAuthorizationValue(authType string, url *url.
 	}
 
 	return authorizeValue, nil
+}
+
+func StringFromAuthenticationMechanism(mechanism AuthenticationMechanism) string {
+	var result string
+	switch mechanism {
+	case NoAuth:
+		result = "NoAuth"
+	case Negotiate:
+		result = "Negotiate"
+	case Mock:
+		result = "Mock"
+	default:
+		result = "Unknonwn AuthenticationMechanism"
+	}
+	return result
 }

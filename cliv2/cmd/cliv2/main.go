@@ -16,6 +16,7 @@ type EnvironmentVariables struct {
 	CacheDirectory               string
 	Insecure                     bool
 	ProxyAuthenticationMechanism httpauth.AuthenticationMechanism
+	ProxyAddr                    string
 }
 
 func getDebugLogger(args []string) *log.Logger {
@@ -29,8 +30,8 @@ func getDebugLogger(args []string) *log.Logger {
 	return debugLogger
 }
 
-func getConfiguration() EnvironmentVariables {
-	args := os.Args[1:]
+func getConfiguration(args []string) (EnvironmentVariables, []string) {
+	argsAsMap := utils.ToKeyValueMap(args, "=")
 
 	envVariables := EnvironmentVariables{
 		CacheDirectory:               os.Getenv("SNYK_CACHE_PATH"),
@@ -44,12 +45,14 @@ func getConfiguration() EnvironmentVariables {
 
 	envVariables.Insecure = utils.Contains(args, "--insecure")
 
-	return envVariables
+	envVariables.ProxyAddr, _ = argsAsMap["--proxy"]
+
+	return envVariables, args
 }
 
 func main() {
-	config := getConfiguration()
-	errorCode := MainWithErrorCode(config, os.Args[1:])
+	config, args := getConfiguration(os.Args[1:])
+	errorCode := MainWithErrorCode(config, args)
 	os.Exit(errorCode)
 }
 
@@ -85,7 +88,8 @@ func MainWithErrorCode(envVariables EnvironmentVariables, args []string) int {
 		return cliv2.SNYK_EXIT_CODE_ERROR
 	}
 
-	wrapperProxy.SetProxyAuthentication(envVariables.ProxyAuthenticationMechanism)
+	wrapperProxy.SetUpstreamProxy(envVariables.ProxyAddr)
+	wrapperProxy.SetUpstreamProxyAuthentication(envVariables.ProxyAuthenticationMechanism)
 
 	port, err := wrapperProxy.Start()
 	if err != nil {
