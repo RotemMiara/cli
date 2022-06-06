@@ -43,23 +43,13 @@ Default: 4 , the current working directory (0) and 4 subdirectories.
 
 Example: `--detection-depth=3` limits search to the specified directory (or the current directory if no `<PATH>` is specified) plus three levels of subdirectories; zero (0) is the current directory.
 
-### `--exclude=<GLOB>[,<GLOB>]...>`
+### `--exclude=<NAME>[,<NAME>]...>`
 
-Use with `--all-projects` and `--yarn-workspaces` to indicate subdirectories and files to exclude.
+Can be used with `--all-projects` and `--yarn-workspaces` to indicate directory names and file names to exclude. Must be comma separated.
 
-The `--exclude` argument must be a comma separated list of directory or file names and cannot contain a path.
+Example: `$ snyk test --all-projects --exclude=dir1,file2`
 
-Note that the glob does need to be an exact match and needs only to be part of the path or the filename.
-
-Use the `--exclude` option with `--detection-depth` to ignore directories at any depth.
-
-Examples:
-
-Exclude any folders, subfolders, or files containing `test` as part of the path or name:\
-`--exclude=test`
-
-Exclude any folders, subfolders, or files containing `fixtures` or `debug` as part of the path or name:\
-`--exclude=fixtures,debug`
+This will exclude any directories and files named "dir1" and "file2" when scanning for project manifest files. Such as: "./dir1", "./src/dir1", "./file2", "./src/file2", and so on.
 
 ### `--prune-repeated-subdependencies`, `-p`
 
@@ -307,11 +297,11 @@ Currently the following options are not supported:
 
 ## Options for scanning using `--unmanaged`
 
-### `` [`--org=<ORG_ID>`](test.md#org-less-than-org\_id-greater-than) ``
+### `` [`--org=<ORG_ID>`](https://docs.snyk.io/snyk-cli/commands/test#org-less-than-org\_id-greater-than) ``
 
-### `` [`--json`](test.md#json) ``
+### `` [`--json`](https://docs.snyk.io/snyk-cli/commands/test#json) ``
 
-### [--json-file-output=\<OUTPUT_FILE_PATH>](test.md#json-file-output-less-than-output_file_path-greater-than)
+### [--json-file-output=\<OUTPUT_FILE_PATH>](https://docs.snyk.io/snyk-cli/commands/test#json-file-output-less-than-output_file_path-greater-than)
 
 ### `--target-dir`&#x20;
 
